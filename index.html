@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GPS Tracker Map</title>
+  <meta charset="utf-8">
+  <style>
+    html, body, #map {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', sans-serif;
+    }
+
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      background: #ffffffdd;
+      padding: 15px;
+      border-radius: 10px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.2);
+      width: 250px;
+    }
+
+    #controls button {
+      display: block;
+      width: 100%;
+      margin: 5px 0;
+      padding: 8px;
+      border: none;
+      border-radius: 5px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+
+    button#manualBtn {
+      background-color: #28a745;
+      color: white;
+      box-shadow: 0 0 6px rgba(40, 167, 69, 0.6);
+    }
+
+    button#manualBtn:hover {
+      background-color: #218838;
+    }
+
+    button#toggleGeo {
+      background-color: #007bff;
+      color: white;
+    }
+
+    button#toggleGeo:hover {
+      background-color: #0056b3;
+    }
+
+    button#finishGeo {
+      background-color: #ffc107;
+      color: black;
+    }
+
+    button#finishGeo:hover {
+      background-color: #e0a800;
+    }
+
+    button#turnOffGeo {
+      background-color: #dc3545;
+      color: white;
+    }
+
+    button#turnOffGeo:hover {
+      background-color: #c82333;
+    }
+
+    #info {
+      font-size: 0.9em;
+      margin-top: 10px;
+      background: #f8f9fa;
+      padding: 8px;
+      border-radius: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <button onclick="toggleTrail()">Toggle Trail</button>
+    <button onclick="clearTrail()">Clear Trail</button>
+    <button id="manualBtn" onclick="startManualMarker()">Add Manual Marker</button>
+    <button id="toggleGeo" onclick="startGeofence()">Toggle Geofence Mode</button>
+    <button id="finishGeo" onclick="finishGeofence()">Finish Geofence</button>
+    <button id="turnOffGeo" onclick="turnOffGeofence()">Turn Off Geofence</button>
+    <div id="info">
+      <strong>Speed:</strong> <span id="speed">--</span> km/h<br>
+      <strong>Altitude:</strong> <span id="altitude">--</span> m<br>
+      <strong>Satellites:</strong> <span id="sats">--</span>
+    </div>
+  </div>
+  <div id="map"></div>
+
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCH4AG5Rth1C8T1OFx9g-WWZ1HtbGi15AE&libraries=geometry"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+  <script>
+    const firebaseConfig = {
+      databaseURL: "https://gps-tracker-9af41-default-rtdb.asia-southeast1.firebasedatabase.app/"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const dbRef = firebase.database().ref('/gps_coords');
+
+    let map, marker, trail = [], trailPath;
+    let geofenceDrawing = false;
+    let geofenceActive = false;
+    let geofenceCoords = [], geofencePolygon;
+    let manualMarkers = [];
+    let addingManualMarker = false;
+
+    function initMap() {
+      map = new google.maps.Map(document.getElementById('map'), {
+        center: { lat: 0, lng: 0 },
+        zoom: 2
+      });
+
+      trailPath = new google.maps.Polyline({
+        map,
+        path: trail,
+        geodesic: true,
+        strokeColor: '#00BFFF',
+        strokeOpacity: 1.0,
+        strokeWeight: 2
+      });
+
+      loadManualMarkers();
+
+      map.addListener("click", (e) => {
+        if (geofenceDrawing) {
+          geofenceCoords.push(e.latLng);
+          drawGeofence();
+        } else if (addingManualMarker) {
+          const pos = { lat: e.latLng.lat(), lng: e.latLng.lng() };
+          saveManualMarker(pos);
+          placeManualMarker(pos);
+          addingManualMarker = false;
+          alert("Manual marker added.");
+        }
+      });
+
+      dbRef.limitToLast(1).on('child_added', (snap) => {
+        const data = snap.val();
+        const pos = { lat: data.latitude, lng: data.longitude };
+        updateMarker(pos);
+        updateTrail(pos);
+        updateTelemetry(data);
+        if (geofenceActive) checkGeofence(pos);
+      });
+    }
+
+    function updateMarker(pos) {
+      if (!marker) {
+        marker = new google.maps.Marker({
+          map,
+          position: pos,
+          icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png'
+        });
+        map.setCenter(pos);
+        map.setZoom(17);
+      } else {
+        marker.setPosition(pos);
+      }
+    }
+
+    function updateTrail(pos) {
+      trail.push(pos);
+      trailPath.setPath(trail);
+    }
+
+    function toggleTrail() {
+      trailPath.setMap(trailPath.getMap() ? null : map);
+    }
+
+    function clearTrail() {
+      trail = [];
+      trailPath.setPath([]);
+    }
+
+    function updateTelemetry(data) {
+      document.getElementById("speed").textContent = data.speed_kmh.toFixed(2);
+      document.getElementById("altitude").textContent = data.altitude_m.toFixed(1);
+      document.getElementById("sats").textContent = data.satellites;
+    }
+
+    function startManualMarker() {
+      if (geofenceDrawing) {
+        alert("Exit geofence drawing first.");
+        return;
+      }
+      addingManualMarker = true;
+      alert("Click on map to place manual marker.");
+    }
+
+    function saveManualMarker(pos) {
+      let stored = JSON.parse(localStorage.getItem("manualMarkers") || "[]");
+      stored.push(pos);
+      localStorage.setItem("manualMarkers", JSON.stringify(stored));
+    }
+
+    function loadManualMarkers() {
+      const saved = JSON.parse(localStorage.getItem("manualMarkers") || "[]");
+      saved.forEach(placeManualMarker);
+    }
+
+    function placeManualMarker(pos) {
+      const m = new google.maps.Marker({
+        map,
+        position: pos,
+        icon: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png'
+      });
+
+      m.addListener("click", () => {
+        if (confirm("Delete this marker?")) {
+          m.setMap(null);
+          manualMarkers = manualMarkers.filter(p => !(p.lat === pos.lat && p.lng === pos.lng));
+          localStorage.setItem("manualMarkers", JSON.stringify(manualMarkers));
+        }
+      });
+
+      manualMarkers.push(pos);
+    }
+
+    function startGeofence() {
+      geofenceDrawing = true;
+      geofenceCoords = [];
+      alert("Geofence drawing started. Click on map to mark boundary.");
+    }
+
+    function finishGeofence() {
+      if (!geofenceCoords.length) return alert("No points marked.");
+      geofenceDrawing = false;
+      geofenceActive = true;
+      drawGeofence();
+      alert("Geofence finalized. Alerts active now.");
+    }
+
+    function turnOffGeofence() {
+      if (geofencePolygon) geofencePolygon.setMap(null);
+      geofenceCoords = [];
+      geofenceDrawing = false;
+      geofenceActive = false;
+      alert("Geofence cleared and turned off.");
+    }
+
+    function drawGeofence() {
+      if (geofencePolygon) geofencePolygon.setMap(null);
+
+      geofencePolygon = new google.maps.Polygon({
+        paths: geofenceCoords,
+        map,
+        fillColor: '#FF0000',
+        fillOpacity: 0.2,
+        strokeColor: '#FF0000',
+        editable: true
+      });
+
+      const path = geofencePolygon.getPath();
+      path.forEach((_, i) => {
+        google.maps.event.addListener(geofencePolygon, 'rightclick', function (e) {
+          if (e.vertex != null) {
+            path.removeAt(e.vertex);
+            geofenceCoords = path.getArray();
+          }
+        });
+      });
+    }
+
+    function checkGeofence(pos) {
+      if (!geofencePolygon || !geofencePolygon.getPath().getLength()) return;
+      const point = new google.maps.LatLng(pos.lat, pos.lng);
+      const inside = google.maps.geometry.poly.containsLocation(point, geofencePolygon);
+      if (!inside) {
+        alert("🚨 ALERT: Device exited geofence!");
+      }
+    }
+
+    window.onload = initMap;
+  </script>
+</body>
+</html>
