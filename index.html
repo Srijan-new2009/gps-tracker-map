@@ -145,7 +145,7 @@
         }
       });
 
-       dbRef.on('value', (snap) => {
+      dbRef.on('value', (snap) => {
         const data = snap.val();
         if (!data) return;
         const pos = { lat: data.latitude, lng: data.longitude };
@@ -154,7 +154,6 @@
         updateTelemetry(data);
         if (geofenceActive) checkGeofence(pos);
       });
-
     }
 
     function updateMarker(pos) {
@@ -287,5 +286,3 @@
   </script>
 </body>
 </html>
-
-
