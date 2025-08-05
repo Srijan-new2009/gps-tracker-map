@@ -106,7 +106,7 @@
       databaseURL: "https://gps-tracker-9af41-default-rtdb.asia-southeast1.firebasedatabase.app/"
     };
     firebase.initializeApp(firebaseConfig);
-    const dbRef = firebase.database().ref('/gps_coords');
+    const dbRef = firebase.database().ref('/gps_coords/latest');
 
     let map, marker, trail = [], trailPath;
     let geofenceDrawing = false;
@@ -145,14 +145,16 @@
         }
       });
 
-      dbRef.limitToLast(1).on('child_added', (snap) => {
+       dbRef.on('value', (snap) => {
         const data = snap.val();
+        if (!data) return;
         const pos = { lat: data.latitude, lng: data.longitude };
         updateMarker(pos);
         updateTrail(pos);
         updateTelemetry(data);
         if (geofenceActive) checkGeofence(pos);
       });
+
     }
 
     function updateMarker(pos) {
@@ -285,3 +287,4 @@
   </script>
 </body>
 </html>
+
